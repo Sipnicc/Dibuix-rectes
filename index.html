@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="ca">
+<head>
+<meta charset="UTF-8">
+<title>Classificació del Qüestionari</title>
+
+<!-- Firebase App -->
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<!-- Firebase Realtime Database SDK -->
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+
+<style>
+  @font-face {
+    font-family: 'AriW9500Display';
+    src: url('ari-w9500-display.ttf') format('truetype');
+  }
+
+  body {
+    font-family: 'AriW9500Display', sans-serif;
+    height: 100vh; 
+    display: flex; 
+    flex-direction: column; 
+    justify-content: center; 
+    align-items: center; 
+    margin: 0;
+    line-height: 1.5;
+  }
+
+  button, input {
+    font-family: 'AriW9500Display', sans-serif;
+    padding: 8px;
+    font-size: 0.9em;
+  }
+
+  input[type="text"] {
+    font-size: 0.9em;
+  }
+</style>
+</head>
+<body>
+
+<!-- TOP STREAK & USER DISPLAY -->
+<div style="text-align: center; margin-bottom: 1em;">
+  <div>Jugador/a: <strong id="userDisplay">Anònim</strong> <button onclick="promptUsername()" style="font-size: 0.8em;">Canvia</button></div>
+  <div style="font-size: 1.3em; margin-top: 0.8em;">Ratxa: <span id="topStreak">0</span></div>
+</div>
+
+<!-- QUIZ AREA -->
+<div style="text-align: center;">
+  <div id="prompt"></div>
+  <br>
+  <div id="inputArea">
+    <input type="text" id="userInput" placeholder="Resposta..." onkeydown="if(event.key==='Enter') checkAnswer()">
+    <button id="btn" onclick="checkAnswer()">Envia</button>
+  </div>
+  <br>
+  <div id="feedback" style="font-size: 0.9em;"></div>
+</div>
+
+<!-- LEADERBOARD (LEFT) -->
+<div style="position: fixed; top: 10px; left: 10px; border: 2px solid black; padding: 12px; font-size: 0.8em;">
+  <div style="font-weight: bold; margin-bottom: 10px;">Classificació</div>
+  <ol id="leaderboardList" style="margin: 0; padding-left: 20px;"></ol>
+</div>
+
+<!-- BOTTOM RIGHT PIXEL ART WIDGET -->
+<div style="position: fixed; bottom: 10px; right: 10px; text-align: center; border: 2px solid black; padding: 10px;">
+  <div style="font-size: 1.3em;">
+    <span id="bottomStreak">0</span>
+  </div>
+  <img id="streakImage" src="Unsurprised1.png" width="256" height="256" style="image-rendering: pixelated; display: block; margin-top: 8px;">
+</div>
+
+<script>
+// --- CONFIGURACIÓ DE FIREBASE ---
+const firebaseConfig = {
+  apiKey: "AIzaSyCVLIgjFZE00PRv5ugTs-5IpgATB3F_sx4",
+  authDomain: "dibuix-leaderboard.firebaseapp.com",
+  databaseURL: "https://dibuix-leaderboard-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "dibuix-leaderboard",
+  storageBucket: "dibuix-leaderboard.firebasestorage.app",
+  messagingSenderId: "549331048607",
+  appId: "1:549331048607:web:0ca4eee6aedffd4c412aaa"
+};
+
+firebase.initializeApp(firebaseConfig);
+const database = firebase.database();
+
+// --- PREGUNTES ---
+const quizData = [
+  {
+    word: "Frontal",
+    phrase: "Quina posició de la recta és?",
+    images: ["frontal.png"]
+  },
+  {
+    word: "Horitzontal",
+    phrase: "Quina posició de la recta és?",
+    images: ["horizontal.png"]
+  },
+  {
+    word: "Obliqua",
+    phrase: "Quina posició de la recta és?",
+    images: ["obliqua.png"]
+  },
+  {
+    word: "Perfil",
+    phrase: "Quina posició de la recta és?",
+    images: ["perfil.png"]
+  },
+  {
+    word: "Perpendicular",
+    phrase: "Quina posició de la recta és?",
+    images: ["perpendicular.png"]
+  },
+  {
+    word: "Vertical",
+    phrase: "Quina posició de la recta és?",
+    images: ["vertical.png"]
+  },
+  {
+    word: "Punta",
+    phrase: "Quina posició de la recta és?",
+    images: ["punta.png"]
+  }
+];
+
+// Imatges dels personatges segons el nivell de ratxa
+const thresholdImages = [
+  {f1: "Unsurprised1.png", f2: "Unsurprised2.png"},
+  {f1: "Happy1.png", f2: "Happy2.png"},
+  {f1: "VeryHappy1.png", f2: "VeryHappy2.png"},
+  {f1: "SuperHappy1.png", f2: "SuperHappy2.png"}
+];
+
+let username = "";
+let streak = 0;
+let personalHighScore = 0;
+let availableIndices = [];
+let currentIndex = -1;
+let isAnswerShowing = false;
+let animFrame = 1;
+
+// --- GESTIÓ D'USUARI I CLASSIFICACIÓ ---
+
+function promptUsername() {
+  const input = prompt("Introdueix el teu nom d'usuari / Gamertag:", username || "Jugador1");
+  if (input && input.trim() !== "") {
+    username = input.trim().replace(/[.$#\[\]\/]/g, "_");
+  } else if (!username) {
+    username = "Anònim";
+  }
+  localStorage.setItem("quiz_gamertag", username);
+  document.getElementById("userDisplay").innerText = username;
+}
+
+function updateLeaderboard(score) {
+  if (!username || score <= personalHighScore) return;
+
+  personalHighScore = score;
+  const userScoreRef = database.ref('leaderboard/' + username);
+
+  userScoreRef.set(score).then(() => {
+    renderLeaderboard();
+  }).catch((err) => {
+    console.error("Error en actualitzar Firebase:", err);
+  });
+}
+
+function renderLeaderboard() {
+  const topScoresRef = database.ref('leaderboard').orderByValue().limitToLast(5);
+
+  topScoresRef.once('value').then((snapshot) => {
+    const list = document.getElementById("leaderboardList");
+    list.innerHTML = "";
+    
+    let scores = [];
+    snapshot.forEach((child) => {
+      scores.push({ player: child.key, score: child.val() });
+      if (child.key === username) {
+        personalHighScore = Math.max(personalHighScore, child.val());
+      }
+    });
+    
+    scores.reverse();
+
+    if (scores.length === 0) {
+      list.innerHTML = "<li>Cap puntuació encara</li>";
+      return;
+    }
+
+    scores.forEach((entry) => {
+      const li = document.createElement("li");
+      li.style.marginBottom = "5px";
+      li.innerText = entry.player + ": " + entry.score;
+      list.appendChild(li);
+    });
+  }).catch((err) => {
+    console.error("Error en llegir Firebase:", err);
+  });
+}
+
+// --- LÒGICA DEL QÜESTIONARI ---
+
+function getRandomIndex() {
+  if (availableIndices.length === 0) {
+    availableIndices = quizData.map((_, index) => index);
+  }
+  const randomIndex = Math.floor(Math.random() * availableIndices.length);
+  return availableIndices.splice(randomIndex, 1)[0];
+}
+
+function loadNextQuestion() {
+  currentIndex = getRandomIndex();
+  const item = quizData[currentIndex];
+  
+  let imagesHTML = item.images.map(img => `<img src="${img}" style="max-height: 200px;">`).join(" ");
+
+  document.getElementById("prompt").innerHTML = 
+    item.phrase + "<br><br>" + imagesHTML;
+    
+  document.getElementById("userInput").value = "";
+  document.getElementById("userInput").disabled = false;
+  document.getElementById("feedback").innerText = "";
+  document.getElementById("btn").innerText = "Envia";
+  document.getElementById("btn").onclick = checkAnswer;
+  isAnswerShowing = false;
+  document.getElementById("userInput").focus();
+}
+
+function checkAnswer() {
+  if (isAnswerShowing) return;
+  
+  const userVal = document.getElementById("userInput").value.trim().toLowerCase();
+  const correctVal = quizData[currentIndex].word.trim().toLowerCase();
+  
+  if (userVal === correctVal) {
+    streak++;
+    document.getElementById("feedback").innerText = "Correcte!";
+  } else {
+    streak = 0;
+    document.getElementById("feedback").innerText = "Incorrecte! La resposta correcta era: " + quizData[currentIndex].word;
+  }
+  
+  updateStreakDisplays();
+  updateLeaderboard(streak);
+  document.getElementById("userInput").disabled = true;
+  document.getElementById("btn").innerText = "Següent paraula";
+  document.getElementById("btn").onclick = loadNextQuestion;
+  isAnswerShowing = true;
+}
+
+function updateStreakDisplays() {
+  document.getElementById("topStreak").innerText = streak;
+  document.getElementById("bottomStreak").innerText = streak;
+}
+
+// --- ANIMACIÓ DEL WIDGET INFERIOR ---
+
+function updateStreakAnimation() {
+  let tier = 0;
+  if (streak >= 10) tier = 3;
+  else if (streak >= 6) tier = 2;
+  else if (streak >= 3) tier = 1;
+
+  const currentTierImages = thresholdImages[tier];
+  
+  if (animFrame === 1) {
+    document.getElementById("streakImage").src = currentTierImages.f1;
+    animFrame = 2;
+  } else {
+    document.getElementById("streakImage").src = currentTierImages.f2;
+    animFrame = 1;
+  }
+}
+
+setInterval(updateStreakAnimation, 500);
+
+// Inicialització
+username = localStorage.getItem("quiz_gamertag");
+if (!username) {
+  promptUsername();
+} else {
+  document.getElementById("userDisplay").innerText = username;
+}
+
+renderLeaderboard();
+loadNextQuestion();
+</script>
+
+</body>
+</html>
